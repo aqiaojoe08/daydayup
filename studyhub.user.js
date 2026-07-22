@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StudyTube
 // @namespace    yuliang.userscripts
-// @version      1.13.0
+// @version      1.14.0
 // @description  Turns YouTube into a learning tool: covers burned-in captions with a movable overlay, streams AI-lab news (Anthropic, OpenAI, DeepMind), and hides the distracting Shorts shelf
 // @author       yuliang
 // @match        https://www.youtube.com/*
@@ -11,11 +11,14 @@
 // @connect      deepmind.google
 // @connect      anthropic.com
 // @connect      prod-pdx.yinliy.people.amazon.dev
+// @downloadURL  https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/studyhub.user.js
+// @updateURL    https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/studyhub.user.js
 // ==/UserScript==
 (function () {
     'use strict';
 
     const POS_KEY = 'gmYtCaptionHiderPos';
+    const HIDE_KEY = 'gmYtCaptionHiderHidden';
     const DEFAULT_POS = { left: 20, top: 78, width: 60, height: 2 }; // percentages of player size
     const RESIZE_HANDLE = 16; // px, bottom-right corner reserved for CSS resize
 
@@ -53,6 +56,14 @@
 
     function savePos(pos) {
         localStorage.setItem(POS_KEY, JSON.stringify(pos));
+    }
+
+    function loadHidden() {
+        return localStorage.getItem(HIDE_KEY) === '1';
+    }
+
+    function saveHidden(hidden) {
+        localStorage.setItem(HIDE_KEY, hidden ? '1' : '0');
     }
 
     function applyPos(pos) {
@@ -124,14 +135,20 @@
         resizing = false;
     }
 
+    function applyHiddenState(hidden) {
+        if (!overlay || !restoreTab) return;
+        overlay.style.display = hidden ? 'none' : 'block';
+        restoreTab.style.display = hidden ? 'block' : 'none';
+    }
+
     function closeOverlay() {
-        overlay.style.display = 'none';
-        restoreTab.style.display = 'block';
+        applyHiddenState(true);
+        saveHidden(true);
     }
 
     function reopenOverlay() {
-        overlay.style.display = 'block';
-        restoreTab.style.display = 'none';
+        applyHiddenState(false);
+        saveHidden(false);
     }
 
     function createOverlay() {
@@ -348,6 +365,7 @@
         player.appendChild(overlay);
         player.appendChild(restoreTab);
         applyPos(loadPos());
+        applyHiddenState(loadHidden());
     }
 
     let newsItems = [];
