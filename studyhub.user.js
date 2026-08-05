@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StudyTube
 // @namespace    yuliang.userscripts
-// @version      1.30.0
+// @version      1.31.0
 // @description  A study dashboard on YouTube and Google: one sidebar with today's + tomorrow's calendar, keyword-filtered unread Gmail, and AI-lab research news from the last 7 days (Anthropic, OpenAI, DeepMind), newest first with hover previews, all in one shared visual style. On YouTube it also covers burned-in captions with a movable overlay, replaces the related-videos rail, docks a panel on the home page, and hides the Shorts shelf.
 // @author       yuliang
 // @match        https://www.youtube.com/*
@@ -38,10 +38,11 @@
     const GMAIL_FEED = 'https://mail.google.com/mail/u/0/feed/atom';
     const GMAIL_POLL_MS = 5 * 60 * 1000;
     const MAIL_FILTER_KEY = 'gmStudyTubeMailFilter'; // persisted keyword filter for the inbox
-    // The Atom feed only ever returns UNREAD mail, so read messages have to be remembered:
-    // anything that was in the feed and then left it has been read (or archived/deleted).
-    // Keeping that history means a filtered inbox still shows its matches once you've read
-    // them, instead of collapsing to "nothing here".
+    // The Atom feed only ever returns UNREAD mail, and the section mirrors it exactly:
+    // anything that has left the feed (read, archived, deleted, relabelled) is dropped from
+    // storage on the next poll. The stored copy is therefore not a read-history, just the
+    // last known unread snapshot — it exists so the panel can show real rows before the
+    // first poll lands and so a failed fetch doesn't blank a filtered view.
     const MAIL_SEEN_KEY = 'gmStudyTubeMailSeen';
     const MAIL_SEEN_MAX = 150; // newest kept; bounds the stored blob
     const MAIL_SEEN_TTL_DAYS = 30;
@@ -783,58 +784,41 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
     }
 
     // ── Gmail (optional; silently absent when not signed in) ─────────────────
-    let mailItems = [];  // what the panel shows: unread from the feed + remembered read
+    let mailItems = [];  // what the panel shows: the feed's unread mail, newest first
     let mailState = 'idle'; // idle | loading | ok | signedout | error
     let mailTimer;
 
-    // Archive of every message this script has seen, so read mail survives leaving the
-    // unread feed. Shared via GM storage, so YouTube and Google agree on what's read.
+    // Last known unread snapshot, shown when a fetch fails so the panel doesn't go blank.
+    // Shared via GM storage, so YouTube and Google agree on it. Everything in here was
+    // unread as of the last successful poll, including blobs written by older versions that
+    // also stored read mail — hence the flag is forced rather than trusted.
     function loadSeenMail() {
         try {
             const raw = gmStore ? GM_getValue(MAIL_SEEN_KEY, null) : localStorage.getItem(MAIL_SEEN_KEY);
             const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            return Array.isArray(list) ? list : [];
+            return Array.isArray(list) ? list.map(m => ({ ...m, unread: true })) : [];
         } catch { return []; } // corrupt blob: start over rather than break the panel
     }
 
+    // Persists this poll's unread list and returns what the panel should show. The TTL and
+    // cap bound the stored blob only: an old-but-unread message is still real mail, so the
+    // full list is returned for display even when a trimmed copy is what gets written.
     function saveSeenMail(list) {
-        // prune by age first, then cap, so an old backlog can't crowd out recent mail
+        const shown = [...list].sort((a, b) => mailTime(b) - mailTime(a));
+        // prune by age first, then cap, so a stale backlog can't crowd out recent mail
         const cutoff = Date.now() - MAIL_SEEN_TTL_DAYS * 86400000;
-        const kept = list
+        const kept = shown
             .filter(m => !m.date || new Date(m.date).getTime() > cutoff || isNaN(new Date(m.date)))
-            .sort((a, b) => mailTime(b) - mailTime(a))
             .slice(0, MAIL_SEEN_MAX);
         const json = JSON.stringify(kept);
         if (gmStore) GM_setValue(MAIL_SEEN_KEY, json);
         else localStorage.setItem(MAIL_SEEN_KEY, json);
-        return kept;
+        return shown;
     }
 
     function mailTime(m) {
         const t = new Date(m.date).getTime();
         return isNaN(t) ? 0 : t;
-    }
-
-    // Gmail's feed has no stable id element, but its link carries a message_id; fall back
-    // to sender+subject+date so entries without one still dedupe.
-    function mailKey(m) {
-        const id = (m.url || '').match(/message_id=([^&]+)/);
-        return id ? id[1] : `${m.from}|${m.title}|${m.date}`;
-    }
-
-    // Merge this poll's unread list into the archive:
-    //  - still in the feed  -> unread
-    //  - in the archive but gone from the feed -> read (or archived/deleted)
-    // Returns the combined list, newest first.
-    function mergeMail(unread) {
-        const archive = loadSeenMail();
-        const byKey = new Map();
-        // remembered messages first, all provisionally read...
-        archive.forEach(m => byKey.set(mailKey(m), { ...m, unread: false }));
-        // ...then this poll's unread entries override, so state always follows the feed
-        unread.forEach(m => byKey.set(mailKey(m), { ...m, unread: true }));
-        const merged = [...byKey.values()].sort((a, b) => mailTime(b) - mailTime(a));
-        return saveSeenMail(merged);
     }
 
     // withCredentials sends the Google cookies; a 401 just means "not signed in"
@@ -875,14 +859,16 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
         const parsed = res.body ? parseGmail(res.body) : null;
         if (parsed) {
             mailState = 'ok';
-            mailItems = mergeMail(parsed.entries);
+            // The feed is the whole truth: whatever it no longer lists has left the unread
+            // inbox, so it is dropped from storage rather than kept as "read". saveSeenMail
+            // overwrites, so this poll's entries are all that survive.
+            mailItems = saveSeenMail(parsed.entries.map(m => ({ ...m, unread: true })));
         } else {
-            // 401/403 means no Google session; anything else is a transport/parse problem
+            // 401/403 means no Google session; anything else is a transport/parse problem.
             mailState = (res.status === 401 || res.status === 403) ? 'signedout' : 'error';
-            // Keep whatever was already read: the fetch failing says nothing about the
-            // archive, and dropping it would blank a panel that had useful history.
-            // Everything shows as read, since the feed can't confirm otherwise.
-            mailItems = loadSeenMail().map(m => ({ ...m, unread: false }));
+            // A failed fetch says nothing about what's still unread, so show the last known
+            // snapshot as-is (and leave storage alone) instead of blanking the panel.
+            mailItems = loadSeenMail();
         }
         renderSidebar();
     }
@@ -896,8 +882,8 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
     function buildMailRow(item) {
         const row = document.createElement('div');
         row.className = 'gm-news-list-row gm-mail-row';
-        // read rows are dimmed and un-bolded via CSS, so unread still stands out
-        if (!item.unread) row.dataset.read = '1';
+        // No read/unread variants: every row here came from the unread feed, and anything
+        // that leaves it is dropped rather than dimmed.
         Object.assign(row.style, {
             display: 'flex',
             alignItems: 'flex-start',
@@ -911,10 +897,8 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
         // not .gm-row-meta: that class means secondary *text*, and borrowing it here made
         // the dot's 10px/accent styling indistinguishable from a real meta line
         ico.className = 'gm-mail-icon';
-        // Filled dot for unread, hollow for read. The two envelope glyphs (✉/✉︎) render
-        // near-identically in most fonts, so they'd leave the state resting on color alone.
-        ico.textContent = item.unread ? '●' : '○';
-        ico.title = item.unread ? 'Unread' : 'Read';
+        ico.textContent = '●';
+        ico.title = 'Unread';
         Object.assign(ico.style, {
             width: '18px', minWidth: '18px', lineHeight: '24px',
             flex: 'none', textAlign: 'center', // size comes from CSS
@@ -928,8 +912,7 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
         const from = document.createElement('div');
         from.className = 'gm-news-list-title';
         from.textContent = item.from || '(unknown sender)';
-        // weight comes from CSS, not inline: an inline value would outrank the
-        // [data-read] rule that un-bolds read senders
+        // weight comes from CSS, not inline, so the shared row styling stays in one place
         Object.assign(from.style, {
             flex: '1',
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -1761,7 +1744,7 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
         mailBody.textContent = '';
         // Nothing to filter until mail is loaded, but a stale query must stay visible so it
         // isn't silently dropped mid-fetch — and so a keyword hiding everything can still
-        // be cleared. mailItems includes read mail, so this survives an empty unread feed.
+        // be cleared.
         p.filter.style.display = mailItems.length || p.filter.value ? '' : 'none';
         const note = (text) => {
             const d = document.createElement('div');
@@ -1775,8 +1758,8 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
             mailBody.appendChild(note('Checking Gmail…'));
             return;
         }
-        // A failed fetch still shows the archive below the warning, so a filtered view
-        // keeps its history instead of going blank.
+        // A failed fetch still shows the last known snapshot below the warning, so a
+        // filtered view keeps its rows instead of going blank.
         if (mailState === 'signedout' || mailState === 'error') {
             mailCount.textContent = '';
             const link = document.createElement('div');
@@ -1800,14 +1783,8 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
         }
         const query = loadMailFilter().trim();
         const shown = query ? mailItems.filter(i => matchesMailFilter(i, query)) : mailItems;
-        const unread = shown.filter(i => i.unread).length;
-        // Lead with the unread count, since that is the section's whole purpose, and add
-        // the row total only when they differ (i.e. some listed mail has since been read).
-        mailCount.textContent = shown.length
-            ? (unread === shown.length ? `${unread} unread`
-                : unread ? `${unread} unread · ${shown.length} shown`
-                    : `${shown.length} since read`)
-            : '';
+        // Every row is unread now, so the count is just the row count.
+        mailCount.textContent = shown.length ? `${shown.length} unread` : '';
         if (!shown.length) {
             // this section only ever saw unread mail, so scope the message to that rather
             // than implying the keyword matches nothing in Gmail at all
@@ -1930,20 +1907,14 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
                 /* leading icon/marker column, shared by the envelope dot and the time */
                 .gm-feed-panel .gm-mail-icon {
                     color: var(--gm-accent);
-                    font-size: 10px; /* the ●/○ marker, not text */
+                    font-size: 10px; /* the ● marker, not text */
                 }
                 .gm-feed-panel .gm-cal-when {
                     color: var(--gm-accent);
                     font-size: 13px;
                     font-weight: 500;
                 }
-                /* ── the only per-section differences, both about de-emphasis ── */
-                /* read mail: legible, but stepped back so unread keeps priority */
-                .gm-feed-panel .gm-mail-row[data-read="1"] .gm-news-list-title,
-                .gm-feed-panel .gm-mail-row[data-read="1"] .gm-mail-icon {
-                    font-weight: 400;
-                    color: var(--gm-fg-dim);
-                }
+                /* ── the one per-section difference, about de-emphasis ── */
                 /* a meeting that is already over */
                 .gm-feed-panel .gm-cal-row[data-past="1"] .gm-news-list-title,
                 .gm-feed-panel .gm-cal-row[data-past="1"] .gm-cal-when {
