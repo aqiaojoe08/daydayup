@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         GitHub HTML Preview
 // @namespace    yuliang.userscripts
-// @version      1.2.0
+// @version      1.3.0
 // @description  Adds a Preview button to GitHub file pages for HTML blobs (.htm, .html, .xhtml, .shtml, ...), opening the rendered page on htmlpreview.github.io (Alt-click for raw.githack.com) instead of the HTML source.
 // @author       yuliang
-// @match        https://github.com/*/*/blob/*.htm*
-// @match        https://github.com/*/*/blob/*.*html*
+// @match        https://github.com/*/*/blob/*/*.htm*
+// @match        https://github.com/*/*/blob/*/*.*html*
 // @grant        none
 // @downloadURL  https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/github-html-preview.user.js
 // @updateURL    https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/github-html-preview.user.js
