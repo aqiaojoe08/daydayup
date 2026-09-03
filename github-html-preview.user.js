@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         GitHub HTML Preview
 // @namespace    yuliang.userscripts
-// @version      1.1.0
-// @description  Adds a Preview button to GitHub file pages for .html/.htm/.xhtml blobs, opening the rendered page on htmlpreview.github.io (Alt-click for raw.githack.com) instead of the HTML source.
+// @version      1.2.0
+// @description  Adds a Preview button to GitHub file pages for HTML blobs (.htm, .html, .xhtml, .shtml, ...), opening the rendered page on htmlpreview.github.io (Alt-click for raw.githack.com) instead of the HTML source.
 // @author       yuliang
 // @match        https://github.com/*/*/blob/*.htm*
-// @match        https://github.com/*/*/blob/*.xhtml*
+// @match        https://github.com/*/*/blob/*.*html*
 // @grant        none
 // @downloadURL  https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/github-html-preview.user.js
 // @updateURL    https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/github-html-preview.user.js
@@ -14,7 +14,8 @@
     'use strict';
 
     const BTN_ID = 'gmGithubHtmlPreview';
-    const PREVIEWABLE = /\.(?:html?|xhtml)$/i;
+    // Mirrors the @match globs: .htm, plus any extension ending in html (.html, .xhtml, .shtml).
+    const PREVIEWABLE = /\.(?:htm|[^./]*html)$/i;
 
     // Both preview services fetch the file from raw.githubusercontent.com, so they only work
     // for public repos. Nothing here can fix that; the button just links out.
