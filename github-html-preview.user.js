@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         GitHub HTML Preview
 // @namespace    yuliang.userscripts
-// @version      1.3.0
+// @version      1.4.0
 // @description  Adds a Preview button to GitHub file pages for HTML blobs (.htm, .html, .xhtml, .shtml, ...), opening the rendered page on htmlpreview.github.io (Alt-click for raw.githack.com) instead of the HTML source.
 // @author       yuliang
-// @match        https://github.com/*/*/blob/*/*.htm*
-// @match        https://github.com/*/*/blob/*/*.*html*
+// @match        https://github.com/*/*/blob/*
 // @grant        none
 // @downloadURL  https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/github-html-preview.user.js
 // @updateURL    https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/github-html-preview.user.js
@@ -14,7 +13,11 @@
     'use strict';
 
     const BTN_ID = 'gmGithubHtmlPreview';
-    // Mirrors the @match globs: .htm, plus any extension ending in html (.html, .xhtml, .shtml).
+    // The HTML test lives here rather than in @match on purpose. Managers disagree about whether a
+    // * in the middle of a path crosses a / — Greasemonkey is the unreliable one — and @match is
+    // evaluated only when the document loads, so a filename-specific pattern also misses files
+    // reached by GitHub's client-side navigation. @match stays coarse; this decides.
+    // Matches .htm plus any extension ending in html: .html, .xhtml, .shtml, .phtml.
     const PREVIEWABLE = /\.(?:htm|[^./]*html)$/i;
 
     // Both preview services fetch the file from raw.githubusercontent.com, so they only work
