@@ -1,0 +1,15 @@
+title: daydayup
+description: Notes on AI agents, developer flow, and the small tools I build along the way.
+author: Yuliang Qiao
+url: https://aqiaojoe08.github.io
+baseurl: /daydayup
+theme: minima
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+header_pages:
+  - about.md
+  - userscripts.md
+minima:
+  social_links:
+    github: aqiaojoe08

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StudyTube
 // @namespace    yuliang.userscripts
-// @version      1.31.0
+// @version      1.32.0
 // @description  A study dashboard on YouTube and Google: one sidebar with today's + tomorrow's calendar, keyword-filtered unread Gmail, and AI-lab research news from the last 7 days (Anthropic, OpenAI, DeepMind), newest first with hover previews, all in one shared visual style. On YouTube it also covers burned-in captions with a movable overlay, replaces the related-videos rail, docks a panel on the home page, and hides the Shorts shelf.
 // @author       yuliang
 // @match        https://www.youtube.com/*
@@ -15,7 +15,6 @@
 // @connect      openai.com
 // @connect      deepmind.google
 // @connect      anthropic.com
-// @connect      prod-pdx.yinliy.people.amazon.dev
 // @connect      mail.google.com
 // @connect      calendar.google.com
 // @downloadURL  https://github.com/aqiaojoe08/daydayup/raw/refs/heads/main/studyhub.user.js
@@ -615,80 +614,6 @@
             && !/customer|partner|deal|brings|business|enterprise adoption/i.test(i.title)).slice(0, limit);
     }
 
-    // ── PowerChat (optional semantic filter; needs Midway session) ──────────
-    const POWERCHAT_URL = 'https://prod-pdx.yinliy.people.amazon.dev/chatOnPage';
-    const PC_CACHE_KEY = 'gmStudyTubePcVerdicts';
-    const PC_CACHE_TTL = 24 * 60 * 60 * 1000;
-
-    function powerChatRequest(message) {
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: `${POWERCHAT_URL}?c=StudyTube&v=${encodeURIComponent(GM_info?.script?.version || 'unknown')}`,
-                headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify({
-                    'Time Zone': Intl.DateTimeFormat().resolvedOptions().timeZone,
-                    'Page Context': [{ Url: location.href, 'Current Page': true, Title: 'StudyTube', Content: '' }],
-                    'Chat History': [],
-                    'Message': message,
-                }),
-                withCredentials: true,
-                timeout: 20000,
-                onload: (r) => {
-                    try {
-                        const completion = JSON.parse(r.responseText).completion;
-                        resolve(completion.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim());
-                    } catch (e) { reject(e); }
-                },
-                onerror: reject,
-                ontimeout: () => reject(new Error('timeout')),
-            });
-        });
-    }
-
-    function loadPcCache() {
-        try {
-            const c = JSON.parse(localStorage.getItem(PC_CACHE_KEY));
-            if (c && Date.now() - c.at < PC_CACHE_TTL) return c.verdicts;
-        } catch { /* corrupt cache */ }
-        return {};
-    }
-
-    // Ask PowerChat which items are genuine research/engineering work; returns {url: boolean}.
-    // Verdicts are cached for 24h so repeated fetch cycles don't re-ask about the same items.
-    async function powerChatVerdicts(items) {
-        const cached = loadPcCache();
-        const unknown = items.filter(i => !(i.url in cached));
-        if (unknown.length) {
-            const payload = JSON.stringify(unknown.map(i => ({ url: i.url, title: i.title, desc: (i.desc || '').slice(0, 120) })));
-            const answer = await powerChatRequest(
-                `You are filtering an AI-news feed for someone studying AI explainability/interpretability and agents.
-Keep only items that describe research findings or engineering/technical work (papers, model releases, methods, benchmarks, safety/alignment/interpretability work, technical deep dives).
-Drop marketing, customer stories, partnerships, hiring, policy, and business announcements.
-
-Items: ${payload}
-
-Return ONLY a JSON object mapping each url to true (keep) or false (drop), no prose.`);
-            Object.assign(cached, JSON.parse(answer));
-            localStorage.setItem(PC_CACHE_KEY, JSON.stringify({ at: Date.now(), verdicts: cached }));
-        }
-        return cached;
-    }
-
-    // Prune the live rotation with PowerChat verdicts; on any failure keep the regex-filtered list.
-    async function refineNewsWithPowerChat() {
-        try {
-            const verdicts = await powerChatVerdicts(newsItems);
-            const kept = newsItems.filter(i => verdicts[i.url] !== false);
-            if (kept.length >= 3 && kept.length < newsItems.length) {
-                console.info(`[StudyTube] PowerChat pruned ${newsItems.length - kept.length}/${newsItems.length} items`);
-                newsItems = kept;
-            }
-        } catch (e) {
-            console.info('[StudyTube] PowerChat filter unavailable, keeping heuristic results:', e.message);
-        }
-    }
-
     async function fetchAllNews() {
         const icon = (domain) => `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
         const sources = [
@@ -764,8 +689,6 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
                 if (!items.length) textEl.textContent = `No AI news in the last ${NEWS_MAX_AGE_DAYS} days`;
                 show();
                 renderSidebar();
-                // async; no-ops without Midway
-                refineNewsWithPowerChat().then(renderSidebar);
             }).finally(() => { newsFetching = false; });
         }
     }
@@ -779,7 +702,6 @@ Return ONLY a JSON object mapping each url to true (keep) or false (drop), no pr
         fetchAllNews().then(items => {
             newsItems = items;
             renderSidebar();
-            return refineNewsWithPowerChat().then(renderSidebar);
         }).finally(() => { newsFetching = false; });
     }
 
